@@ -1,7 +1,5 @@
-
-#include <TFT_eSPI.h>
-#include <SPI.h>
-
+//=========================================================================
+// TFT
 // 18x18 wifi icon bitmap in 565 format
 const uint16_t wifi_icon[324] = {
   0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, // row 0, 18 pixels
@@ -24,24 +22,27 @@ const uint16_t wifi_icon[324] = {
   0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000
 }; // row 17, 324 pixels
 
+#include <TFT_eSPI.h>
+#include <SPI.h>
 
 // For the breakout, you can use any 2 or 3 pins
 // These pins will also work for the 1.8" TFT shield
-#define TFT_CS     D1
-#define TFT_RST    D0  // you can also connect this to the Arduino reset
+//#define TFT_CS     D1
+//#define TFT_RST    D0  // you can also connect this to the Arduino reset
 // in which case, set this #define pin to -1!
-#define TFT_DC     D2
-
+//#define TFT_DC     D2
 
 TFT_eSPI tft = TFT_eSPI();  // Invoke library, pins defined in User_Setup.h
 //=========================================================================
 // WiFi
 #include <ESP8266WiFi.h>
-#include <ESP8266HTTPClient.h>
-#include <ArduinoJson.h>
 #include "credentials.h"
 //const char* ssid     = "xxxxx";
 //const char* password = "xxxx";
+IPAddress staticIP(192, 168, 1, 102);
+IPAddress gateway(192, 168, 1, 250);
+IPAddress subnet(255, 255, 255, 0);
+IPAddress dns(8, 8, 8, 8);  //DNS
 //=========================================================================
 // OTA
 #include <WiFiUdp.h>
@@ -51,6 +52,13 @@ TFT_eSPI tft = TFT_eSPI();  // Invoke library, pins defined in User_Setup.h
 // https://github.com/mcxiaoke/ESPDateTime
 #include <ESPDateTime.h>
 //=========================================================================
+// Web page
+#include <ESPAsyncTCP.h>
+#include "LittleFS.h"
+#include <ESPAsyncWebServer.h>
+AsyncWebServer server(80);
+//=========================================================================
+//
 const int STATE_OFF = 0;
 const int STATE_ON = 1;
 const int STATE_BOOST = 2;
@@ -59,6 +67,7 @@ byte _triggered = 0;
 int _progressRadius = 0;
 const byte _relayOutputPin = D6;    //D4 is the internal LED
 //=========================================================================
+// Boost button
 const byte _boostInterruptPin = D3;
 void IRAM_ATTR boostInterruptISR() {
   if (_triggered == 0)
@@ -80,9 +89,19 @@ void IRAM_ATTR boostInterruptISR() {
 void setup(void) {
   Serial.begin(9600);
 
+  // Initialize LittleFS
+  if (!LittleFS.begin()) {
+    Serial.println("An Error has occurred while mounting LittleFS");
+    return;
+  }
+
+  initServerRoutes();
+  server.begin();
+
   tft.init();
   tft.setRotation(3);
   tft.fillScreen(ST7735_BLACK);
+
   connectWiFi();
   initOTA();
   setupDateTime();
@@ -102,6 +121,8 @@ void loop() {
   setState();
   drawBorder();
   drawText();
+  ArduinoOTA.handle();
+  yield();
   delay(100);
 }
 
@@ -109,6 +130,7 @@ bool connectWiFi() {
   // Init WiFi
   Serial.println("Connecting to WiFi");
   WiFi.mode(WIFI_STA);
+  WiFi.config(staticIP, gateway, subnet, dns);
   WiFi.begin(ssid, password);
 
   while (WiFi.status() != WL_CONNECTED) {
@@ -278,7 +300,7 @@ void drawText()
     }
     else if (_state == STATE_ON)
     {
-      tft.setCursor(44, 70);
+      tft.setCursor(46, 70);
       tft.println("ON");
     }
     else
@@ -305,4 +327,82 @@ int getStateColour() {
     colour =  ST7735_RED;
   }
   return colour;
+}
+
+//===========================================================================
+// Web server
+//===========================================================================
+
+void initServerRoutes()
+{
+  //======================================================================
+  // File handlers with compression. Must be an easier way of handling multiple files...
+  server.on("/index.html", HTTP_GET, [](AsyncWebServerRequest * request) {
+    AsyncWebServerResponse *response = request->beginResponse(LittleFS, "/index.html.gz", "text/html");
+    response->addHeader("Content-Encoding", "gzip");
+    request->send(response);
+  });
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest * request) {
+    AsyncWebServerResponse *response = request->beginResponse(LittleFS, "/index.html.gz", "text/html");
+    response->addHeader("Content-Encoding", "gzip");
+    request->send(response);
+  });
+  server.on("/bootstrap.bundle.min.js", HTTP_GET, [](AsyncWebServerRequest * request) {
+    AsyncWebServerResponse *response = request->beginResponse(LittleFS, "/bootstrap.bundle.min.js.gz", "text/javascript");
+    response->addHeader("Content-Encoding", "gzip");
+    request->send(response);
+  });
+  server.on("/bootstrap.min.css", HTTP_GET, [](AsyncWebServerRequest * request) {
+    AsyncWebServerResponse *response = request->beginResponse(LittleFS, "/bootstrap.min.css.gz", "text/css");
+    response->addHeader("Content-Encoding", "gzip");
+    request->send(response);
+  });
+  server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest * request) {
+    AsyncWebServerResponse *response = request->beginResponse(LittleFS, "/favicon.ico.gz", "image/x-icon");
+    response->addHeader("Content-Encoding", "gzip");
+    request->send(response);
+  });
+  server.on("/leaf-r.png", HTTP_GET, [](AsyncWebServerRequest * request) {
+    AsyncWebServerResponse *response = request->beginResponse(LittleFS, "/leaf-r.png.gz", "image/png");
+    response->addHeader("Content-Encoding", "gzip");
+    request->send(response);
+  });
+  server.on("/leaf-g.png", HTTP_GET, [](AsyncWebServerRequest * request) {
+    AsyncWebServerResponse *response = request->beginResponse(LittleFS, "/leaf-g.png.gz", "image/png");
+    response->addHeader("Content-Encoding", "gzip");
+    request->send(response);
+  });
+  server.on("/leaf-b.png", HTTP_GET, [](AsyncWebServerRequest * request) {
+    AsyncWebServerResponse *response = request->beginResponse(LittleFS, "/leaf-b.png.gz", "image/png");
+    response->addHeader("Content-Encoding", "gzip");
+    request->send(response);
+  });
+
+  // API
+  server.on("/status", HTTP_GET, [](AsyncWebServerRequest * request) {
+    request->send_P(200, "text/plain", getStatus().c_str());
+  });
+  server.on("/boost", HTTP_POST, [](AsyncWebServerRequest * request) {
+    switchState();
+    request->send_P(200, "text/plain", "OK");
+  });
+}
+
+void switchState() {
+  // Toggle boost state
+  if (_state == STATE_BOOST) {
+    _state = STATE_OFF;
+  } else {
+    _state = STATE_BOOST;
+  }
+}
+
+String getStatus() {
+  // Return date/time and state
+  String stat = String("{\"dt\":\""  +
+      DateTime.format("%FT%T") +
+      "\",\"st\":\"" +
+      String(_state) + 
+      "\"}"); 
+  return stat;
 }
