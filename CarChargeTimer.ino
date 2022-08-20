@@ -98,7 +98,17 @@ void IRAM_ATTR boostInterruptISR() {
   }
 }
 //=========================================================================
-
+/*
+  LCD   D1 MINI
+  1 BL  N/C
+  2 CS  D1
+  3 DC  D2
+  4 RES D0
+  5 SDA D7
+  6 SCL D5
+  7 VCC 3V3
+  8 GND Ground
+*/
 void setup(void) {
   Serial.begin(9600);
 
@@ -112,7 +122,7 @@ void setup(void) {
   server.begin();
 
   tft.init();
-  tft.setRotation(3);
+  tft.setRotation(2);
   tft.fillScreen(ST7735_BLACK);
 
   connectWiFi();
@@ -135,8 +145,11 @@ void loop() {
   drawBorder();
   drawText();
   ArduinoOTA.handle();
-  yield();
-  delay(100);
+  for (int i = 0; i < 5; i++)
+  {
+    yield();
+    delay(20);
+  }
 }
 
 bool connectWiFi() {
@@ -227,11 +240,14 @@ void setState()
 
   if (_state > STATE_OFF)
   {
-    digitalWrite(_relayOutputPin, HIGH);
+    // Control Pilot line is wired through N/C so that when plug removed, the charger defaults to ON
+    // To switch ON we need to turn the relay OFF
+    digitalWrite(_relayOutputPin, LOW);
   }
   else
   {
-    digitalWrite(_relayOutputPin, LOW);
+    // To switch OFF we need to turn the relay ON
+    digitalWrite(_relayOutputPin, HIGH);
   }
 }
 
@@ -413,9 +429,9 @@ void switchState() {
 String getStatus() {
   // Return date/time and state
   String stat = String("{\"dt\":\""  +
-      DateTime.format("%FT%T") +
-      "\",\"st\":\"" +
-      String(_state) + 
-      "\"}"); 
+                       DateTime.format("%FT%T") +
+                       "\",\"st\":\"" +
+                       String(_state) +
+                       "\"}");
   return stat;
 }
